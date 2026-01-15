@@ -1,11 +1,12 @@
 import streamlit as st
 import numpy as np
 import soundfile as sf
+import io
 
 st.set_page_config(page_title="1/3オクターブEQ解析", layout="centered")
 
 st.title("🎧 1/3オクターブEQ設定算出ツール")
-st.write("音源と録音を比較して、1/3オクターブEQ設定（-30〜30 dB）を出力します")
+st.write("音源と録音を比較し、1/3オクターブEQ設定を算出します")
 
 # -----------------------------
 # 1/3オクターブ中心周波数
@@ -63,6 +64,26 @@ def calculate_13oct_eq(src, rec, sr):
     return eq_values
 
 # -----------------------------
+# EQ適用
+# -----------------------------
+def apply_eq(src, sr, eq_values):
+    fft = np.fft.rfft(src)
+    freqs = np.fft.rfftfreq(len(src), 1 / sr)
+
+    eq_curve = np.ones_like(freqs)
+
+    for fc, gain in zip(THIRD_OCT_BANDS, eq_values):
+        f_low = fc / (2 ** (1/6))
+        f_high = fc * (2 ** (1/6))
+        idx = np.where((freqs >= f_low) & (freqs <= f_high))[0]
+        eq_curve[idx] *= 10 ** (gain / 20)
+
+    processed = np.fft.irfft(fft * eq_curve)
+    processed /= np.max(np.abs(processed))
+
+    return processed
+
+# -----------------------------
 # UI
 # -----------------------------
 source_file = st.file_uploader("🎼 音源.wav を選択", type=["wav"])
@@ -75,22 +96,20 @@ if source_file and recorded_file:
     rec, _ = load_audio(recorded_file)
 
     eq_values = calculate_13oct_eq(src, rec, sr)
+    processed = apply_eq(src, sr, eq_values)
 
-    st.subheader("📊 1/3オクターブEQ設定結果")
+    st.subheader("📄 1/3オクターブEQ設定（テキスト）")
 
-    eq_table = {
-        "中心周波数 (Hz)": THIRD_OCT_BANDS,
-        "EQ設定 (dB)": eq_values
-    }
-
-    st.table(eq_table)
-
-    st.subheader("📄 テキスト表示")
     text_output = ""
     for fc, g in zip(THIRD_OCT_BANDS, eq_values):
         text_output += f"{fc:>6} Hz : {g:+d} dB\n"
 
     st.text(text_output)
 
+    st.subheader("🔊 EQ適用後の音を再生")
+    buffer = io.BytesIO()
+    sf.write(buffer, processed, sr, format="WAV")
+    st.audio(buffer.getvalue(), format="audio/wav")
+
 else:
-    st.info("音源.wav と 録音.wav を両方アップロードしてください")
+    st.info("音源.wav と 録音.wav を両方アップロードしてね")
