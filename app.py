@@ -2,11 +2,9 @@ import streamlit as st
 import numpy as np
 import soundfile as sf
 import io
+import pandas as pd
 
-st.set_page_config(page_title="1/3オクターブEQ解析", layout="centered")
-
-st.title("🎧 1/3オクターブEQ設定算出ツール")
-st.write("音源と録音を比較し、1/3オクターブEQ設定を算出します")
+st.set_page_config(page_title="EQ Lab - 1/3オクターブEQ", layout="wide")
 
 # -----------------------------
 # 1/3オクターブ中心周波数
@@ -18,6 +16,10 @@ THIRD_OCT_BANDS = np.array([
     2500, 3150, 4000, 5000, 6300,
     8000, 10000, 12500, 16000
 ])
+
+# セッション状態の初期化
+if "eq_values" not in st.session_state:
+    st.session_state.eq_values = [0] * len(THIRD_OCT_BANDS)
 
 # -----------------------------
 # 音声読み込み
@@ -57,9 +59,11 @@ def calculate_13oct_eq(src, rec, sr):
 
         ratio = np.mean(mag_rec[idx] / mag_src[idx])
         gain_db = 20 * np.log10(ratio)
-        gain_db = int(np.clip(round(gain_db), -30, 30))
+        # 算出したゲインを逆にする（補正用）
+        correction_db = -gain_db
+        correction_db = int(np.clip(round(correction_db), -30, 30))
 
-        eq_values.append(gain_db)
+        eq_values.append(correction_db)
 
     return eq_values
 
@@ -79,37 +83,98 @@ def apply_eq(src, sr, eq_values):
         eq_curve[idx] *= 10 ** (gain / 20)
 
     processed = np.fft.irfft(fft * eq_curve)
-    processed /= np.max(np.abs(processed))
+    
+    # 正規化（クリッピング防止）
+    max_val = np.max(np.abs(processed))
+    if max_val > 1e-9:
+        processed /= max_val
 
     return processed
 
 # -----------------------------
-# UI
+# メインUI
 # -----------------------------
-source_file = st.file_uploader("🎼 音源.wav を選択", type=["wav"])
-recorded_file = st.file_uploader("🎤 録音.wav を選択", type=["wav"])
+st.title("🎧 EQ Lab")
+st.write("音源を比較してEQ設定を算出したり、別の音声に適用したりできるよ！")
 
-if source_file and recorded_file:
-    st.success("ファイルが選択されました")
+tab1, tab2 = st.tabs(["📊 比較・解析", "✨ EQ適用"])
 
-    src, sr = load_audio(source_file)
-    rec, _ = load_audio(recorded_file)
+# --- タブ1: 比較・解析 ---
+with tab1:
+    st.header("1/3オクターブEQ解析")
+    st.write("基準となる「音源」と、実際に録音された「録音」を比較して、その差を埋めるEQ設定を見つけるよ。")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        source_file = st.file_uploader("🎼 基準音源 (.wav)", type=["wav"], key="src_upload")
+    with col2:
+        recorded_file = st.file_uploader("🎤 録音ファイル (.wav)", type=["wav"], key="rec_upload")
 
-    eq_values = calculate_13oct_eq(src, rec, sr)
-    processed = apply_eq(src, sr, eq_values)
+    if source_file and recorded_file:
+        if st.button("EQを解析する"):
+            with st.spinner("解析中..."):
+                src, sr = load_audio(source_file)
+                rec, _ = load_audio(recorded_file)
+                
+                # EQ算出
+                st.session_state.eq_values = calculate_13oct_eq(src, rec, sr)
+                st.success("解析が終わったよ！現在のEQ設定に保存したよ。")
 
-    st.subheader("📄 1/3オクターブEQ設定（テキスト）")
+    # 現在のEQ設定を表示・調整
+    st.subheader("現在のEQ設定 (1/3 Octave Bands)")
+    
+    # インタラクティブなスライダーで微調整も可能にする
+    edited_eq = []
+    
+    # 5つずつ並べる
+    cols = st.columns(5)
+    for i, fc in enumerate(THIRD_OCT_BANDS):
+        with cols[i % 5]:
+            val = st.slider(f"{fc} Hz", -30, 30, st.session_state.eq_values[i], key=f"band_{fc}")
+            edited_eq.append(val)
+    
+    st.session_state.eq_values = edited_eq
 
-    text_output = ""
-    for fc, g in zip(THIRD_OCT_BANDS, eq_values):
-        text_output += f"{fc:>6} Hz : {g:+d} dB\n"
+    if st.button("設定をリセット"):
+        st.session_state.eq_values = [0] * len(THIRD_OCT_BANDS)
+        st.rerun()
 
-    st.text(text_output)
+# --- タブ2: EQ適用 ---
+with tab2:
+    st.header("別の音声に適用")
+    st.write("「比較・解析」タブで決まった（または自分で調整した）EQ設定を、好きな音声ファイルに適用できるよ。")
+    
+    target_file = st.file_uploader("🎵 適用したい音声ファイル (.wav)", type=["wav"], key="target_upload")
+    
+    if target_file:
+        if st.button("EQを適用して生成"):
+            with st.spinner("処理中..."):
+                data, sr = load_audio(target_file)
+                processed = apply_eq(data, sr, st.session_state.eq_values)
+                
+                st.success("適用完了！")
+                
+                # 再生
+                st.subheader("🔊 プレビュー")
+                buffer = io.BytesIO()
+                sf.write(buffer, processed, sr, format="WAV")
+                st.audio(buffer.getvalue(), format="audio/wav")
+                
+                # ダウンロードボタン
+                st.download_button(
+                    label="💾 処理後のファイルをダウンロード",
+                    data=buffer.getvalue(),
+                    file_name="processed_audio.wav",
+                    mime="audio/wav"
+                )
+    else:
+        st.info("適用したいファイルをアップロードしてね。")
 
-    st.subheader("🔊 EQ適用後の音を再生")
-    buffer = io.BytesIO()
-    sf.write(buffer, processed, sr, format="WAV")
-    st.audio(buffer.getvalue(), format="audio/wav")
-
-else:
-    st.info("音源.wav と 録音.wav を両方アップロードしてね")
+# 共通: 現在のEQ設定のプレビュー（グラフなど）
+st.divider()
+st.subheader("📈 現在のEQカーブ")
+df_eq = pd.DataFrame({
+    "Frequency (Hz)": [str(f) for f in THIRD_OCT_BANDS],
+    "Gain (dB)": st.session_state.eq_values
+})
+st.line_chart(df_eq.set_index("Frequency (Hz)"))
