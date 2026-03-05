@@ -21,14 +21,31 @@ THIRD_OCT_BANDS = np.array([
 if "eq_values" not in st.session_state:
     st.session_state.eq_values = [0] * len(THIRD_OCT_BANDS)
 
+from pydub import AudioSegment
+
 # -----------------------------
-# 音声読み込み
+# 音声読み込み (wav/mp3 対応)
 # -----------------------------
 def load_audio(file):
-    data, sr = sf.read(file)
-    if data.ndim > 1:
-        data = data.mean(axis=1)
-    return data, sr
+    # ファイルの拡張子を確認
+    file_type = file.name.split('.')[-1].lower()
+    
+    if file_type == "mp3":
+        audio = AudioSegment.from_file(file, format="mp3")
+        # numpy配列に変換
+        samples = np.array(audio.get_array_of_samples()).astype(np.float32)
+        # 正規化
+        samples /= (1 << (8 * audio.sample_width - 1))
+        # ステレオならモノラル化
+        if audio.channels > 1:
+            samples = samples.reshape((-1, audio.channels)).mean(axis=1)
+        return samples, audio.frame_rate
+    else:
+        # wavとして読み込み
+        data, sr = sf.read(file)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        return data, sr
 
 # -----------------------------
 # 1/3オクターブEQ算出
@@ -106,9 +123,9 @@ with tab1:
     
     col1, col2 = st.columns(2)
     with col1:
-        source_file = st.file_uploader("🎼 基準音源 (.wav)", type=["wav"], key="src_upload")
+        source_file = st.file_uploader("🎼 基準音源 (.wav / .mp3)", type=["wav", "mp3"], key="src_upload")
     with col2:
-        recorded_file = st.file_uploader("🎤 録音ファイル (.wav)", type=["wav"], key="rec_upload")
+        recorded_file = st.file_uploader("🎤 録音ファイル (.wav / .mp3)", type=["wav", "mp3"], key="rec_upload")
 
     if source_file and recorded_file:
         if st.button("EQを解析する"):
@@ -145,7 +162,7 @@ with tab2:
     st.header("別の音声に適用")
     st.write("「比較・解析」タブで決まった（または自分で調整した）EQ設定を、好きな音声ファイルに適用できるよ。")
     
-    target_file = st.file_uploader("🎵 適用したい音声ファイル (.wav)", type=["wav"], key="target_upload")
+    target_file = st.file_uploader("🎵 適用したい音声ファイル (.wav / .mp3)", type=["wav", "mp3"], key="target_upload")
     
     if target_file:
         if st.button("EQを適用して生成"):
