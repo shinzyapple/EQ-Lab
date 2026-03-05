@@ -119,21 +119,22 @@ with tab1:
                 # EQ算出
                 st.session_state.eq_values = calculate_13oct_eq(src, rec, sr)
                 st.success("解析が終わったよ！現在のEQ設定に保存したよ。")
+                st.rerun()
 
-    # 現在のEQ設定を表示・調整
-    st.subheader("現在のEQ設定 (1/3 Octave Bands)")
+    # 現在のEQ設定を表示
+    st.subheader("📊 現在の解析結果")
     
-    # インタラクティブなスライダーで微調整も可能にする
-    edited_eq = []
-    
-    # 5つずつ並べる
-    cols = st.columns(5)
-    for i, fc in enumerate(THIRD_OCT_BANDS):
-        with cols[i % 5]:
-            val = st.slider(f"{fc} Hz", -30, 30, st.session_state.eq_values[i], key=f"band_{fc}")
-            edited_eq.append(val)
-    
-    st.session_state.eq_values = edited_eq
+    if any(v != 0 for v in st.session_state.eq_values):
+        # テキストで一覧表示
+        text_output = ""
+        for fc, g in zip(THIRD_OCT_BANDS, st.session_state.eq_values):
+            text_output += f"{fc:>6} Hz : {g:+d} dB | "
+            if int(fc) % 1000 == 0 or fc == 80 or fc == 800: # 適当なところで改行
+                text_output += "\n"
+        
+        st.code(text_output)
+    else:
+        st.info("まだ解析されてないよ。上のボタンから解析してね。")
 
     if st.button("設定をリセット"):
         st.session_state.eq_values = [0] * len(THIRD_OCT_BANDS)
